@@ -6,15 +6,37 @@ export default function App() {
   const [parsed, setParsed] = useState<any>(null);
   const [response, setResponse] = useState("");
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!e.target.files?.length) return;
-    const file = e.target.files[0];
-    const result = await sendAudio(file);
+async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  if (!e.target.files?.length) return;
+  const file = e.target.files[0];
 
-    setTranscript(result.transcript);
-    setParsed(result.parsed);
-    setResponse(result.response);
+  // 🧠 Step 1: Send audio to STT backend
+  const result = await sendAudio(file);
+
+  // 🧱 Step 2: Update UI state
+  setTranscript(result.transcript);
+  setParsed(result.parsed);
+  setResponse(result.response);
+
+  // 🔊 Step 3: Fetch and play the TTS audio response
+  try {
+    const ttsRes = await fetch("http://127.0.0.1:8000/tts", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    text: result.response_tts || result.response,
+    speaker: result.parsed?.speaker || "controller",
+  }),
+});
+
+    if (!ttsRes.ok) throw new Error("TTS request failed");
+    const blob = await ttsRes.blob();
+    const audioUrl = URL.createObjectURL(blob);
+    new Audio(audioUrl).play();
+  } catch (err) {
+    console.error("TTS playback error:", err);
   }
+}
 
   return (
     <div className="p-6 font-mono text-gray-100 bg-slate-900 min-h-screen">
