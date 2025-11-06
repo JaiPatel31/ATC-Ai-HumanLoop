@@ -1,7 +1,9 @@
 from fastapi import FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from stt_hf import transcribe
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,5 +17,5 @@ def root():
 
 @app.post("/stt")
 async def stt(file: UploadFile):
-    # placeholder
-    return {"transcript": "N123AB ready for takeoff runway two seven"}
+    text = await transcribe(file)
+    return {"transcript": text}
