@@ -32,6 +32,46 @@ NUM_WORDS = {
     "EIGHTY": "80",
     "NINETY": "90",
 }
+AIRLINE_PREFIXES = {
+    "DELTA": "Delta Air Lines",
+    "AMERICAN": "American Airlines",
+    "UNITED": "United Airlines",
+    "SOUTHWEST": "Southwest Airlines",
+    "LUFTHANSA": "Lufthansa",
+    "RYANAIR": "Ryanair",
+    "EASY": "easyJet",
+    "EASYJET": "easyJet",
+    "BRITISH": "British Airways",
+    "SPEEDBIRD": "British Airways",
+    "AIRFRANS": "Air France",
+    "AIRFRANCE": "Air France",
+    "KLM": "KLM Royal Dutch Airlines",
+    "AIRCANADA": "Air Canada",
+    "TURKISH": "Turkish Airlines",
+    "AUSTRIAN": "Austrian Airlines",
+    "SWISS": "Swiss International Air Lines",
+    "AEROFLOT": "Aeroflot",
+    "EMIRATES": "Emirates",
+    "QATAR": "Qatar Airways",
+    "QATARI": "Qatar Airways",
+    "FINNAIR": "Finnair",
+    "CSA": "Czech Airlines",
+    "LOT": "LOT Polish Airlines",
+    "AIRBERLIN": "Air Berlin",
+    "AIRINDIA": "Air India",
+    "ETHIOPIAN": "Ethiopian Airlines",
+    "OMANAIR": "Oman Air",
+    "SINGAPORE": "Singapore Airlines",
+    "CATHAY": "Cathay Pacific",
+    "JETBLUE": "JetBlue Airways",
+    "UPS": "UPS Airlines",
+    "FEDEX": "FedEx Express",
+    "ALASKA": "Alaska Airlines",
+    "SPIRIT": "Spirit Airlines",
+    "VUELING": "Vueling Airlines",
+    "AIRCARGO": "Air Cargo",
+    "NORSHUTTLE": "Norwegian Air Shuttle",
+}
 
 DESCEND_KEYWORDS = {
     "DESCEND",
@@ -62,6 +102,13 @@ TURN_KEYWORDS = {
     "TURNING",
     "VECTOR",
 }
+
+
+# New airport operation keywords
+TAXI_KEYWORDS = {"TAXI", "TAXIWAY", "TAXIING", "TAXI TO", "TAXY"}
+TAKEOFF_KEYWORDS = {"TAKEOFF", "DEPART", "DEPARTURE", "LINEUP", "LINE", "CLEARED FOR TAKEOFF"}
+LANDING_KEYWORDS = {"LAND", "LANDING", "TOUCH", "CLEARED TO LAND", "FINAL", "RUNWAY"}
+HOLD_KEYWORDS = {"HOLD", "HOLDING", "HOLD SHORT", "LINE UP AND WAIT", "WAIT"}
 
 PILOT_MARKERS = {
     "REQUEST",
@@ -116,6 +163,16 @@ def _tokenize(text: str) -> list[str]:
     cleaned = re.sub(r"[^A-Z0-9\s]", " ", cleaned)
     tokens = [t for t in cleaned.split() if t]
     return tokens
+
+def _extract_airline(callsign: Optional[str]) -> Optional[str]:
+    """Infer airline name from the callsign prefix, if recognizable."""
+    if not callsign:
+        return None
+
+    for prefix, name in AIRLINE_PREFIXES.items():
+        if callsign.startswith(prefix):
+            return name
+    return None
 
 
 def _digits_from_tokens(words: Iterable[str], *, min_digits: int = 1) -> Optional[int]:
@@ -256,12 +313,27 @@ def _extract_flight_levels(tokens: list[str]) -> tuple[Optional[int], Optional[i
 def _detect_command(tokens: list[str], *, trend: Optional[str]) -> Optional[str]:
     token_set = set(tokens)
 
+    # Airborne operations
     if token_set & DESCEND_KEYWORDS:
         return "descend"
     if token_set & CLIMB_KEYWORDS:
         return "climb"
     if token_set & MAINTAIN_KEYWORDS:
         return "maintain"
+    if token_set & TURN_KEYWORDS or "HEADING" in token_set:
+        return "turn"
+
+    # Ground operations
+    if token_set & TAXI_KEYWORDS:
+        return "taxi"
+    if token_set & TAKEOFF_KEYWORDS:
+        return "takeoff"
+    if token_set & LANDING_KEYWORDS:
+        return "land"
+    if token_set & HOLD_KEYWORDS:
+        return "hold"
+
+    # Requests with embedded intent
     if {"REQUEST", "REQUESTING"} & token_set:
         if token_set & DESCEND_KEYWORDS:
             return "descend"
@@ -269,9 +341,38 @@ def _detect_command(tokens: list[str], *, trend: Optional[str]) -> Optional[str]
             return "climb"
         if token_set & MAINTAIN_KEYWORDS:
             return "maintain"
-    if token_set & TURN_KEYWORDS or "HEADING" in token_set:
-        return "turn"
+        if token_set & TAXI_KEYWORDS:
+            return "taxi"
+        if token_set & TAKEOFF_KEYWORDS:
+            return "takeoff"
+        if token_set & LANDING_KEYWORDS:
+            return "land"
+        if token_set & HOLD_KEYWORDS:
+            return "hold"
+
     return trend
+
+def _extract_runway_and_taxiway(tokens: list[str]) -> tuple[Optional[str], Optional[str]]:
+    runway = None
+    taxiway = None
+
+    # Runway numbers — e.g. "RUNWAY TWO FIVE" or "RUNWAY 25"
+    for i, t in enumerate(tokens):
+        if t == "RUNWAY" and i + 1 < len(tokens):
+            num = _digits_from_tokens(tokens[i + 1 : i + 4])
+            if num is not None:
+                runway = f"{num:02d}"  # format as 02
+                break
+
+    # Taxiways — single letters or short alphanumeric names, e.g. "TAXIWAY ALPHA", "VIA A"
+    for i, t in enumerate(tokens):
+        if t in {"TAXIWAY", "VIA"} and i + 1 < len(tokens):
+            nxt = tokens[i + 1]
+            if re.fullmatch(r"[A-Z]{1,3}", nxt):
+                taxiway = nxt
+                break
+
+    return runway, taxiway
 
 
 def _detect_speaker(tokens: list[str], callsign: Optional[str], command: Optional[str]) -> str:
@@ -311,7 +412,7 @@ def _detect_speaker(tokens: list[str], callsign: Optional[str], command: Optiona
         if prefix and tokens[0].startswith(prefix):
             return "controller"
 
-    if command in {"descend", "climb", "turn", "maintain"}:
+    if command in {"descend", "climb", "turn", "maintain", "taxi", "takeoff", "land", "hold"}:
         return "controller"
     return "unknown"
 
@@ -337,13 +438,20 @@ def _additional_callsign(tokens: list[str], primary: Optional[str]) -> Optional[
     return None
 
 
+
 def parse_atc(text: str):
     tokens = _tokenize(text)
 
+    # --- Core extractions ---
     callsign = _extract_callsign(tokens)
+    airline = _extract_airline(callsign)
     heading = _extract_heading(tokens)
     flight_level, initial_level, target_level = _extract_flight_levels(tokens)
 
+    # ✈️ NEW: runway and taxiway support
+    runway, taxiway = _extract_runway_and_taxiway(tokens)
+
+    # --- Detect vertical trend (for climb/descend inference) ---
     trend = None
     if initial_level is not None and target_level is not None:
         if target_level < initial_level:
@@ -351,14 +459,18 @@ def parse_atc(text: str):
         elif target_level > initial_level:
             trend = "climb"
 
+    # --- Detect command (now includes taxi/land/takeoff/hold) ---
     command = _detect_command(tokens, trend=trend)
-
     if command is None and trend is not None:
         command = trend
 
+    # --- Identify likely speaker ---
     speaker = _detect_speaker(tokens, callsign, command)
 
+    # --- Secondary callsign (for traffic alerts or handoffs) ---
     traffic_callsign = _additional_callsign(tokens, callsign)
+
+    # --- Detect special events ---
     event = None
     token_set = set(tokens)
     if (
@@ -368,13 +480,25 @@ def parse_atc(text: str):
         or "CONFLICT" in token_set
     ):
         event = "traffic_alert"
+    elif "RUNWAY" in token_set and "INCURSION" in token_set:
+        event = "runway_incursion"
+    elif "BIRD" in token_set and "STRIKE" in token_set:
+        event = "bird_strike"
+    elif "ABORT" in token_set or "REJECTED" in token_set:
+        event = "takeoff_abort"
 
+    # --- Return structured result ---
     return {
         "callsign": callsign,
+        "airline": airline,  # ✈️ new field
         "heading": heading,
         "flight_level": flight_level,
         "command": command,
         "speaker": speaker,
         "event": event,
         "traffic_callsign": traffic_callsign,
+        "runway": runway,
+        "taxiway": taxiway,
     }
+
+
