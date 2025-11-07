@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
-import { sendAudio } from "./api";
+import { interpretTranscript, sendAudio } from "./api";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel";
 import type {
   ParsedTransmission,
   TransmissionEntry,
   AircraftState,
   Conflict,
+  SttResult,
 } from "./types";
 import "./App.css";
 
@@ -175,48 +176,43 @@ export default function App() {
   const [response, setResponse] = useState("");
   const [history, setHistory] = useState<TransmissionEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [manualTranscript, setManualTranscript] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const aircraftStates = useMemo(() => buildAircraftStates(history), [history]);
   const conflicts = useMemo(() => detectConflicts(aircraftStates), [aircraftStates]);
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!e.target.files?.length) return;
-    const file = e.target.files[0];
+  async function processResult(result: SttResult) {
+    const normalizedParsed = normalizeParsed(result.parsed);
+    const transcriptText = result.transcript ?? "";
+    const responseText = result.response ?? "";
 
-    setIsLoading(true);
-    setError(null);
+    setTranscript(transcriptText);
+    setParsed(normalizedParsed);
+    setResponse(responseText);
 
-    try {
-      const result = await sendAudio(file);
-      const normalizedParsed = normalizeParsed(result.parsed);
+    setHistory((prev) => {
+      const entry: TransmissionEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        transcript: transcriptText,
+        parsed: normalizedParsed,
+        response: responseText,
+      };
+      const updated = [...prev, entry];
+      if (updated.length > HISTORY_LIMIT) {
+        return updated.slice(updated.length - HISTORY_LIMIT);
+      }
+      return updated;
+    });
 
-      setTranscript(result.transcript ?? "");
-      setParsed(normalizedParsed);
-      setResponse(result.response ?? "");
-
-      setHistory((prev) => {
-        const entry: TransmissionEntry = {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          timestamp: new Date().toISOString(),
-          transcript: result.transcript ?? "",
-          parsed: normalizedParsed,
-          response: result.response ?? "",
-        };
-        const updated = [...prev, entry];
-        if (updated.length > HISTORY_LIMIT) {
-          return updated.slice(updated.length - HISTORY_LIMIT);
-        }
-        return updated;
-      });
-
-      // 🔊 Step 3: Fetch and play the TTS audio response
+    if (responseText || result.response_tts) {
       try {
         const ttsRes = await fetch("http://127.0.0.1:8000/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text: result.response_tts || result.response,
+            text: result.response_tts || responseText,
             speaker: normalizedParsed?.speaker || "controller",
           }),
         });
@@ -228,12 +224,47 @@ export default function App() {
       } catch (err) {
         console.error("TTS playback error:", err);
       }
+    }
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files?.length) return;
+    const file = e.target.files[0];
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const result = await sendAudio(file);
+      await processResult(result);
     } catch (err) {
       console.error("Transmission error", err);
       setError("Unable to process the transmission. Please try a different recording.");
     } finally {
       setIsLoading(false);
       e.target.value = "";
+    }
+  }
+
+  async function handleManualSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!manualTranscript.trim()) {
+      setError("Please enter a transmission to interpret.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const result = await interpretTranscript(manualTranscript.trim());
+      await processResult(result);
+      setManualTranscript("");
+    } catch (err) {
+      console.error("Interpretation error", err);
+      setError("Unable to interpret the typed transmission. Please adjust the text and try again.");
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -270,6 +301,24 @@ export default function App() {
                   className="file-input__control"
                 />
               </label>
+
+              <form className="manual-form" onSubmit={handleManualSubmit}>
+                <label className="manual-form__label" htmlFor="manual-transcript">
+                  Or paste a transcript
+                </label>
+                <textarea
+                  id="manual-transcript"
+                  className="manual-form__textarea"
+                  placeholder="CSA zero two five, request descent to flight level three one zero."
+                  value={manualTranscript}
+                  onChange={(event) => setManualTranscript(event.target.value)}
+                  disabled={isLoading}
+                  rows={4}
+                />
+                <button className="manual-form__submit" type="submit" disabled={isLoading}>
+                  {isLoading ? "Interpreting…" : "Interpret transmission"}
+                </button>
+              </form>
 
               {error && <p className="panel__status panel__status--error">{error}</p>}
             </section>

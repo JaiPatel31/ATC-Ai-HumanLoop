@@ -1,10 +1,11 @@
-from fastapi import FastAPI, UploadFile
+from fastapi import Body, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from stt_hf import transcribe
 from parser import parse_atc
 from fastapi.responses import FileResponse
 from tts import synthesize
 from phonetics import replace_callsign_at_start, expand_callsign_inline
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -13,53 +14,67 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/stt")
-async def stt(file: UploadFile):
-    transcript = await transcribe(file)
-    parsed = parse_atc(transcript)
-    transcript = replace_callsign_at_start(transcript, parsed.get("callsign"))
-
+def _build_controller_response(parsed: dict) -> str:
     cs = parsed.get("callsign") or "Aircraft"
     fl = parsed.get("flight_level") or 0
     hdg = parsed.get("heading") or 0
     cmd = parsed.get("command")
     speaker = parsed.get("speaker")
 
-    # --- your existing response generation ---
     if speaker == "pilot":
         if cmd == "descend":
-            response_text = f"{cs}, roger. Descend to flight level {fl} approved."
-        elif cmd == "climb":
-            response_text = f"{cs}, roger. Climb and maintain flight level {fl} approved."
-        elif cmd == "turn":
-            response_text = f"{cs}, roger. Turn heading {hdg} approved."
-        elif cmd == "maintain":
-            response_text = f"{cs}, roger. Maintain current flight level {fl}."
-        else:
-            response_text = f"{cs}, say again."
-    elif speaker == "controller":
-        if cmd == "descend":
-            response_text = f"{cs}, wilco. Descending to flight level {fl}."
-        elif cmd == "climb":
-            response_text = f"{cs}, wilco. Climbing to flight level {fl}."
-        elif cmd == "turn":
-            response_text = f"{cs}, wilco. Turning heading {hdg}."
-        elif cmd == "maintain":
-            response_text = f"{cs}, wilco. Maintaining flight level {fl}."
-        else:
-            response_text = f"{cs}, wilco."
-    else:
-        response_text = f"{cs}, say again — transmission unclear."
+            return f"{cs}, roger. Descend to flight level {fl} approved."
+        if cmd == "climb":
+            return f"{cs}, roger. Climb and maintain flight level {fl} approved."
+        if cmd == "turn":
+            return f"{cs}, roger. Turn heading {hdg} approved."
+        if cmd == "maintain":
+            return f"{cs}, roger. Maintain current flight level {fl}."
+        return f"{cs}, say again."
 
-    # 🔡 expand callsign for TTS output
+    if speaker == "controller":
+        if cmd == "descend":
+            return f"{cs}, wilco. Descending to flight level {fl}."
+        if cmd == "climb":
+            return f"{cs}, wilco. Climbing to flight level {fl}."
+        if cmd == "turn":
+            return f"{cs}, wilco. Turning heading {hdg}."
+        if cmd == "maintain":
+            return f"{cs}, wilco. Maintaining flight level {fl}."
+        return f"{cs}, wilco."
+
+    return f"{cs}, say again — transmission unclear."
+
+
+def _process_transcript(transcript: str):
+    if not transcript or not transcript.strip():
+        raise HTTPException(status_code=400, detail="Transcript is empty")
+
+    parsed = parse_atc(transcript)
+    normalized = replace_callsign_at_start(transcript, parsed.get("callsign"))
+    response_text = _build_controller_response(parsed)
     response_tts = expand_callsign_inline(response_text, parsed.get("callsign"))
 
     return {
-        "transcript": transcript,
+        "transcript": normalized,
         "parsed": parsed,
-        "response": response_text,      # for on-screen display
-        "response_tts": response_tts    # use this for /tts playback
+        "response": response_text,
+        "response_tts": response_tts,
     }
+
+
+@app.post("/stt")
+async def stt(file: UploadFile):
+    transcript = await transcribe(file)
+    return _process_transcript(transcript)
+
+
+@app.post("/interpret")
+async def interpret(payload: dict = Body(...)):
+    transcript = payload.get("transcript", "") if isinstance(payload, dict) else ""
+    return _process_transcript(transcript)
+
+
 @app.post("/tts")
 async def tts_endpoint(data: dict):
     text = data.get("text", "")
