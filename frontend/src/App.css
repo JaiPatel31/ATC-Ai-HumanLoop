@@ -160,6 +160,73 @@ body {
   cursor: progress;
 }
 
+.capture-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.push-to-talk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.85rem 1.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, 0.4);
+  background: rgba(13, 148, 136, 0.32);
+  color: rgba(209, 250, 229, 0.95);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.push-to-talk:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 38px -24px rgba(20, 184, 166, 0.8);
+}
+
+.push-to-talk--active {
+  background: rgba(20, 184, 166, 0.55);
+  color: #0f172a;
+  box-shadow: 0 0 0 6px rgba(45, 212, 191, 0.2);
+}
+
+.push-to-talk:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.push-to-talk__indicator {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.4);
+  box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.15);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.push-to-talk--active .push-to-talk__indicator {
+  background: rgb(248, 113, 113);
+  box-shadow: 0 0 0 6px rgba(248, 113, 113, 0.18);
+}
+
+.push-to-talk__hint {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.push-to-talk__hint--disabled {
+  color: rgba(148, 163, 184, 0.5);
+}
+
 .manual-form {
   display: flex;
   flex-direction: column;
