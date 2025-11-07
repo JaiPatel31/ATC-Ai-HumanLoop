@@ -28,6 +28,18 @@ class ParserRegressionTests(unittest.TestCase):
                         msg=f"field {field} mismatch for '{sample.transcript}'",
                     )
 
+    def test_parser_detects_traffic_alert_conflict(self):
+        transcript = (
+            "Center, DEMO202 flight level three four zero heading two seven zero, "
+            "TCAS traffic alert on DEMO101."
+        )
+        parsed = parse_atc(transcript)
+
+        self.assertEqual(parsed.get("callsign"), "DEMO202")
+        self.assertEqual(parsed.get("event"), "traffic_alert")
+        self.assertEqual(parsed.get("traffic_callsign"), "DEMO101")
+        self.assertEqual(parsed.get("heading"), 270)
+
 
 class ResponseBuilderTests(unittest.TestCase):
     def test_response_templates(self):
@@ -51,6 +63,21 @@ class ResponseBuilderTests(unittest.TestCase):
             (
                 {"callsign": None, "command": None, "speaker": None},
                 "Aircraft, say again — transmission unclear.",
+            ),
+            (
+                {
+                    "callsign": "DEMO202",
+                    "flight_level": 340,
+                    "heading": 270,
+                    "speaker": "pilot",
+                    "event": "traffic_alert",
+                    "traffic_callsign": "DEMO101",
+                },
+                (
+                    "DEMO202, roger. Traffic alert on DEMO101 acknowledged. "
+                    "Turn left heading 240 immediately. Descend to flight level 320 for separation. "
+                    "We'll ensure DEMO101 maintains clearance. Report clear of conflict."
+                ),
             ),
         ]
 

@@ -316,6 +316,27 @@ def _detect_speaker(tokens: list[str], callsign: Optional[str], command: Optiona
     return "unknown"
 
 
+def _additional_callsign(tokens: list[str], primary: Optional[str]) -> Optional[str]:
+    """Return the first callsign candidate that isn't the primary."""
+
+    if not tokens:
+        return None
+
+    def _is_callsign_candidate(token: str) -> bool:
+        if token in NON_CALLSIGN_PREFIXES:
+            return False
+        return bool(re.fullmatch(r"[A-Z]{1,10}\d{1,4}[A-Z]{0,2}", token))
+
+    for token in tokens:
+        if not _is_callsign_candidate(token):
+            continue
+        if primary and token == primary:
+            continue
+        return token
+
+    return None
+
+
 def parse_atc(text: str):
     tokens = _tokenize(text)
 
@@ -337,10 +358,23 @@ def parse_atc(text: str):
 
     speaker = _detect_speaker(tokens, callsign, command)
 
+    traffic_callsign = _additional_callsign(tokens, callsign)
+    event = None
+    token_set = set(tokens)
+    if (
+        ("TCAS" in token_set and "ALERT" in token_set)
+        or ("TCAS" in token_set and "TRAFFIC" in token_set)
+        or ("TRAFFIC" in token_set and "ALERT" in token_set)
+        or "CONFLICT" in token_set
+    ):
+        event = "traffic_alert"
+
     return {
         "callsign": callsign,
         "heading": heading,
         "flight_level": flight_level,
         "command": command,
         "speaker": speaker,
+        "event": event,
+        "traffic_callsign": traffic_callsign,
     }
