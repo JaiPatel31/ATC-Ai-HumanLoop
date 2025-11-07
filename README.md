@@ -98,6 +98,20 @@ If you host it elsewhere, update the base URLs in `frontend/src/api.ts`.
   you need to reset the workspace.
 * The repository uses the default Vite/TypeScript ESLint configuration for the
   frontend. Run `npm run lint` inside `frontend/` to check React code style.
+* A lightweight `/health` endpoint reports the availability of STT/TTS engines
+  alongside parser sample accuracy so you can plug the backend into monitoring
+  dashboards.
+
+## Quality and evaluation
+
+* **Parser scorecard** – Run `python backend/evaluation.py` to generate an
+  accuracy report against six curated pilot/controller exchanges that exercise
+  the heuristics in `parser.parse_atc`.
+* **Automated tests** – Execute `python -m unittest discover backend/tests` to
+  regress the parser and controller-response builder against the curated corpus.
+* **Operational checks** – Query `GET /health` to obtain readiness information
+  (STT/TTS availability plus parser accuracy snapshots) suitable for dashboards
+  or smoke tests.
 
 ## License
 

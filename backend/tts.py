@@ -97,3 +97,13 @@ def synthesize(text: str, speaker: str = "controller", path: str = "response.wav
     tts.tts_to_file(text=text, file_path=full_path)
     return add_radio_effect(full_path)
 
+
+def describe_capabilities() -> dict[str, Any]:
+    """Expose availability and cache state for health checks."""
+
+    return {
+        "available": TTS is not None,
+        "loaded_voices": sorted(tts_cache.keys()),
+        "supported_voices": sorted(TTS_MODELS.keys()),
+    }
+
