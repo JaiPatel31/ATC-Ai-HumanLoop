@@ -1,9 +1,10 @@
 from fastapi import Body, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from stt_hf import transcribe
+from stt_hf import pipeline_status, transcribe
 from parser import parse_atc
+from evaluation import evaluate
 from fastapi.responses import FileResponse
-from tts import synthesize
+from tts import describe_capabilities, synthesize
 from phonetics import replace_callsign_at_start, expand_callsign_inline
 
 app = FastAPI()
@@ -83,4 +84,18 @@ async def tts_endpoint(data: dict):
         return {"error": "Missing text"}
     path = synthesize(text, speaker=speaker)
     return FileResponse(path, media_type="audio/wav")
+
+
+@app.get("/health")
+async def health_check():
+    """Expose backend readiness for monitoring dashboards."""
+
+    return {
+        "status": "ok",
+        "speech_to_text": pipeline_status(),
+        "text_to_speech": describe_capabilities(),
+        "parser": {
+            "sample_accuracy": evaluate()["accuracy"],
+        },
+    }
 
