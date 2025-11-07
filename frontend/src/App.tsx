@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { interpretTranscript, sendAudio } from "./api";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel";
 import type {
@@ -178,6 +179,43 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [manualTranscript, setManualTranscript] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isMicSupported, setIsMicSupported] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<BlobPart[]>([]);
+  const pendingStopRef = useRef(false);
+
+  const stopActiveStream = () => {
+    const stream = mediaStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    mediaStreamRef.current = null;
+  };
+
+  useEffect(() => {
+    const supported =
+      typeof window !== "undefined" &&
+      typeof navigator !== "undefined" &&
+      typeof (window as typeof window & { MediaRecorder?: typeof MediaRecorder }).MediaRecorder !==
+        "undefined" &&
+      !!navigator.mediaDevices &&
+      typeof navigator.mediaDevices.getUserMedia === "function";
+    setIsMicSupported(Boolean(supported));
+
+    return () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+      }
+      stopActiveStream();
+      mediaRecorderRef.current = null;
+      recordedChunksRef.current = [];
+      pendingStopRef.current = false;
+    };
+  }, []);
 
   const aircraftStates = useMemo(() => buildAircraftStates(history), [history]);
   const conflicts = useMemo(() => detectConflicts(aircraftStates), [aircraftStates]);
@@ -227,10 +265,7 @@ export default function App() {
     }
   }
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!e.target.files?.length) return;
-    const file = e.target.files[0];
-
+  async function processAudioFile(file: File) {
     setIsLoading(true);
     setError(null);
 
@@ -242,6 +277,16 @@ export default function App() {
       setError("Unable to process the transmission. Please try a different recording.");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files?.length) return;
+    const file = e.target.files[0];
+
+    try {
+      await processAudioFile(file);
+    } finally {
       e.target.value = "";
     }
   }
@@ -268,6 +313,130 @@ export default function App() {
     }
   }
 
+  async function beginPushToTalk() {
+    if (isLoading) return;
+    const activeRecorder = mediaRecorderRef.current;
+    if (activeRecorder && activeRecorder.state === "recording") {
+      return;
+    }
+    if (!isMicSupported) {
+      setError("Push-to-talk is not supported in this browser. Please upload an audio file instead.");
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError("Microphone capture is unavailable. Please upload an audio file instead.");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordedChunksRef.current = [];
+      mediaStreamRef.current = stream;
+
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      });
+
+      recorder.addEventListener("stop", () => {
+        setIsRecording(false);
+        const chunks = recordedChunksRef.current;
+        recordedChunksRef.current = [];
+        stopActiveStream();
+        mediaRecorderRef.current = null;
+
+        if (!chunks.length) {
+          if (pendingStopRef.current) {
+            pendingStopRef.current = false;
+          }
+          setError("Recording was too short. Please try again.");
+          return;
+        }
+
+        const mimeType = recorder.mimeType || "audio/webm";
+        const blob = new Blob(chunks, { type: mimeType });
+        const file = new File([blob], `push-to-talk-${Date.now()}.webm`, { type: mimeType });
+        pendingStopRef.current = false;
+        void processAudioFile(file);
+      });
+
+      recorder.start();
+      setIsRecording(true);
+
+      if (pendingStopRef.current) {
+        recorder.stop();
+      }
+    } catch (err) {
+      console.error("Microphone access error", err);
+      stopActiveStream();
+      mediaRecorderRef.current = null;
+      recordedChunksRef.current = [];
+      pendingStopRef.current = false;
+      setIsRecording(false);
+      setError(
+        "Unable to access the microphone. Please allow permission or upload an audio file instead.",
+      );
+    }
+  }
+
+  function endPushToTalk() {
+    pendingStopRef.current = true;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    } else {
+      setIsRecording(false);
+    }
+  }
+
+  const handlePushToTalkPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (isLoading || !isMicSupported) {
+      return;
+    }
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    pendingStopRef.current = false;
+    void beginPushToTalk();
+  };
+
+  const handlePushToTalkPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    endPushToTalk();
+  };
+
+  const handlePushToTalkPointerLeave = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!isRecording) {
+      return;
+    }
+    event.preventDefault();
+    endPushToTalk();
+  };
+
+  const handlePushToTalkKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === " " || event.key === "Enter") {
+      if (!isRecording && !isLoading && isMicSupported) {
+        event.preventDefault();
+        pendingStopRef.current = false;
+        void beginPushToTalk();
+      }
+    }
+  };
+
+  const handlePushToTalkKeyUp = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      endPushToTalk();
+    }
+  };
+
   return (
     <div className="app-shell">
       <div className="app-container">
@@ -287,20 +456,46 @@ export default function App() {
                 <span className={`status-indicator${isLoading ? " status-indicator--active" : ""}`} />
               </div>
               <p className="panel__subtitle">
-                Upload a recorded exchange from the frequency. We will transcribe it, interpret the intent, and
-                flag any conflicts automatically.
+                Upload a recorded exchange or hold push-to-talk to capture one live. We will transcribe it,
+                interpret the intent, and flag any conflicts automatically.
               </p>
 
-              <label className={`file-input${isLoading ? " file-input--disabled" : ""}`}>
-                <span>{isLoading ? "Processing…" : "Choose audio file"}</span>
-                <input
-                  type="file"
-                  accept="audio/*"
-                  onChange={handleFile}
-                  disabled={isLoading}
-                  className="file-input__control"
-                />
-              </label>
+              <div className="capture-actions">
+                <label className={`file-input${isLoading ? " file-input--disabled" : ""}`}>
+                  <span>{isLoading ? "Processing…" : "Choose audio file"}</span>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={handleFile}
+                    disabled={isLoading}
+                    className="file-input__control"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className={`push-to-talk${isRecording ? " push-to-talk--active" : ""}`}
+                  onPointerDown={handlePushToTalkPointerDown}
+                  onPointerUp={handlePushToTalkPointerUp}
+                  onPointerLeave={handlePushToTalkPointerLeave}
+                  onPointerCancel={handlePushToTalkPointerLeave}
+                  onKeyDown={handlePushToTalkKeyDown}
+                  onKeyUp={handlePushToTalkKeyUp}
+                  disabled={isLoading || !isMicSupported}
+                  aria-pressed={isRecording}
+                >
+                  <span className="push-to-talk__indicator" aria-hidden="true" />
+                  {isRecording ? "Release to send" : "Hold to record"}
+                </button>
+              </div>
+              <p
+                className={`push-to-talk__hint${!isMicSupported ? " push-to-talk__hint--disabled" : ""}`}
+              >
+                {isMicSupported
+                  ? isRecording
+                    ? "Recording… release to send the transmission."
+                    : "Hold the push-to-talk button to capture audio from your microphone."
+                  : "Push-to-talk is unavailable in this browser. Upload an audio file instead."}
+              </p>
 
               <form className="manual-form" onSubmit={handleManualSubmit}>
                 <label className="manual-form__label" htmlFor="manual-transcript">

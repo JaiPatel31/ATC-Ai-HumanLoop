@@ -1,6 +1,13 @@
 import type { SttResult } from "./types";
 
-export async function sendAudio(file: File): Promise<SttResult> {
+export async function sendAudio(source: Blob | File): Promise<SttResult> {
+  const file =
+    source instanceof File
+      ? source
+      : new File([source], `push-to-talk-${Date.now()}.webm`, {
+          type: source.type || "audio/webm",
+        });
+
   const form = new FormData();
   form.append("file", file);
 
