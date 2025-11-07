@@ -13,6 +13,24 @@ NUM_WORDS = {
     "EIGHT": "8",
     "NINE": "9",
     "NINER": "9",
+    "TEN": "10",
+    "ELEVEN": "11",
+    "TWELVE": "12",
+    "THIRTEEN": "13",
+    "FOURTEEN": "14",
+    "FIFTEEN": "15",
+    "SIXTEEN": "16",
+    "SEVENTEEN": "17",
+    "EIGHTEEN": "18",
+    "NINETEEN": "19",
+    "TWENTY": "20",
+    "THIRTY": "30",
+    "FORTY": "40",
+    "FIFTY": "50",
+    "SIXTY": "60",
+    "SEVENTY": "70",
+    "EIGHTY": "80",
+    "NINETY": "90",
 }
 
 DESCEND_KEYWORDS = {
@@ -149,6 +167,25 @@ def _extract_callsign(tokens: list[str]) -> Optional[str]:
         if prefix_len > best_prefix_len:
             best_candidate = candidate
             best_prefix_len = prefix_len
+
+    # Attempt to combine adjacent tokens such as "AIR CANADA" before the number.
+    for idx in range(len(tokens) - 1):
+        first = tokens[idx]
+        if first in NON_CALLSIGN_PREFIXES or not re.fullmatch(r"[A-Z]{2,9}", first):
+            continue
+        combined = first
+        for next_idx in range(idx + 1, min(idx + 3, len(tokens))):
+            second = tokens[next_idx]
+            if second in NON_CALLSIGN_PREFIXES or not re.fullmatch(r"[A-Z]{2,9}", second):
+                break
+            combined += second
+            number_tokens = (
+                t for t in tokens[next_idx + 1 : next_idx + 6] if t not in {"FLIGHT", "LEVEL"}
+            )
+            number = _digits_from_tokens(number_tokens, min_digits=1)
+            if number is not None and len(combined) > best_prefix_len:
+                best_candidate = f"{combined}{number}"
+                best_prefix_len = len(combined)
 
     return best_candidate
 
