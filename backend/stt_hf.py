@@ -1,7 +1,11 @@
+import os
 import tempfile
 from typing import Any
 
 from fastapi import HTTPException, UploadFile
+
+# 🧩 Disable torchcodec before importing transformers
+os.environ["TRANSFORMERS_NO_TORCHCODEC"] = "1"
 
 try:
     import torch
@@ -35,7 +39,6 @@ _ASR_ATTEMPTED = False
 
 def load_asr_pipeline(*, force: bool = False) -> Any | None:
     """Lazily load the ASR pipeline so offline test runs avoid network calls."""
-
     global ASR_PIPELINE, _ASR_ATTEMPTED  # pylint: disable=global-statement
 
     if not force and _ASR_ATTEMPTED and ASR_PIPELINE is not None:
@@ -57,7 +60,6 @@ def pipeline_status() -> dict[str, object]:
 
 async def transcribe(file: UploadFile):
     data = await file.read()
-
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
@@ -69,7 +71,10 @@ async def transcribe(file: UploadFile):
         except UnicodeDecodeError as exc:
             raise HTTPException(
                 status_code=500,
-                detail="Speech-to-text model is unavailable and the provided file could not be decoded as text.",
+                detail=(
+                    "Speech-to-text model is unavailable "
+                    "and the provided file could not be decoded as text."
+                ),
             ) from exc
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
