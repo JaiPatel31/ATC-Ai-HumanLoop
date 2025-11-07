@@ -60,6 +60,12 @@ body {
   gap: 1.5rem;
 }
 
+.analysis-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 .panel {
   background: rgba(15, 23, 42, 0.85);
   border: 1px solid rgba(148, 163, 184, 0.12);
@@ -366,11 +372,19 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
   font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(148, 163, 184, 0.7);
   margin-bottom: 0.6rem;
+}
+
+.history-item__meta-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .history-item__transcript {
@@ -386,6 +400,42 @@ body {
   color: rgb(134, 239, 172);
 }
 
+.log-export {
+  padding: 0.45rem 1.05rem;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  background: rgba(37, 99, 235, 0.28);
+  color: rgba(191, 219, 254, 0.95);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.log-export:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px -18px rgba(59, 130, 246, 0.7);
+}
+
+.history-item__replay {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, 0.4);
+  background: rgba(13, 148, 136, 0.25);
+  color: rgba(209, 250, 229, 0.95);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.history-item__replay:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -16px rgba(45, 212, 191, 0.6);
+}
+
 /* Conflict panel */
 .conflict-panel {
   position: sticky;
@@ -393,6 +443,84 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.airspace-panel__meta {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.6);
+}
+
+.airspace-map {
+  position: relative;
+  margin-top: 1rem;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.65);
+  aspect-ratio: 3 / 2;
+}
+
+.airspace-map svg {
+  width: 100%;
+  height: 100%;
+}
+
+.airspace-map__ring {
+  fill: none;
+  stroke: rgba(148, 163, 184, 0.18);
+  stroke-width: 0.4;
+}
+
+.airspace-map__spoke {
+  stroke: rgba(30, 64, 175, 0.28);
+  stroke-width: 0.35;
+}
+
+.airspace-map__track {
+  stroke: rgba(165, 243, 252, 0.75);
+  stroke-width: 0.6;
+  fill: rgba(14, 116, 144, 0.9);
+}
+
+.airspace-map__track line {
+  stroke: currentColor;
+  stroke-width: 0.6;
+  stroke-linecap: round;
+}
+
+.airspace-map__track--conflict {
+  fill: rgba(248, 113, 113, 0.95);
+  stroke: rgba(248, 113, 113, 0.95);
+}
+
+.airspace-map__label {
+  font-size: 4px;
+  fill: rgba(226, 232, 240, 0.92);
+  font-family: inherit;
+}
+
+.airspace-map__label--secondary {
+  fill: rgba(148, 163, 184, 0.8);
+}
+
+.airspace-panel__legend {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.legend-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.85);
+  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.18);
 }
 
 .conflict-panel__count {
@@ -473,6 +601,12 @@ body {
   gap: 1rem;
 }
 
+.aircraft-card__tags {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .aircraft-card__callsign {
   margin: 0;
   font-size: 1.1rem;
@@ -504,6 +638,16 @@ body {
 .badge--muted {
   background: rgba(71, 85, 105, 0.35);
   color: rgba(148, 163, 184, 0.7);
+}
+
+.badge--origin-live {
+  background: rgba(22, 163, 74, 0.25);
+  color: rgba(134, 239, 172, 0.95);
+}
+
+.badge--origin-simulated {
+  background: rgba(59, 130, 246, 0.22);
+  color: rgba(191, 219, 254, 0.95);
 }
 
 .aircraft-card__grid {
@@ -586,6 +730,37 @@ body {
   font-size: 0.85rem;
   line-height: 1.5;
   color: rgba(226, 232, 240, 0.82);
+}
+
+.next-action {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.1rem 1.2rem;
+  border-radius: 16px;
+  background: rgba(30, 64, 175, 0.32);
+  border: 1px solid rgba(59, 130, 246, 0.28);
+}
+
+.next-action__title {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(191, 219, 254, 0.85);
+}
+
+.next-action__summary {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.next-action__rationale {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: rgba(148, 163, 184, 0.75);
 }
 
 @media (max-width: 768px) {

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { interpretTranscript, sendAudio } from "./api";
+import AirspaceMap from "./components/AirspaceMap";
 import ConflictResolutionPanel from "./components/ConflictResolutionPanel";
 import type {
   ParsedTransmission,
   TransmissionEntry,
   AircraftState,
   Conflict,
+  NextActionSuggestion,
   SttResult,
 } from "./types";
 import "./App.css";
@@ -33,39 +35,36 @@ function formatClock(timestamp: string) {
   });
 }
 
-function buildAircraftStates(entries: TransmissionEntry[]): AircraftState[] {
-  const states = new Map<string, AircraftState>();
+const SECTOR_HALF_WIDTH = 90;
+const SECTOR_HALF_HEIGHT = 60;
 
-  for (const entry of entries) {
-    const parsed = entry.parsed;
-    if (!parsed || typeof parsed.callsign !== "string" || !parsed.callsign) {
-      continue;
-    }
+function randomHeading() {
+  return Math.round(Math.random() * 360);
+}
 
-    const flightLevel =
-      typeof parsed.flight_level === "number" && !Number.isNaN(parsed.flight_level)
-        ? parsed.flight_level
-        : undefined;
-    const heading =
-      typeof parsed.heading === "number" && !Number.isNaN(parsed.heading)
-        ? parsed.heading
-        : undefined;
-    const command = typeof parsed.command === "string" ? parsed.command : undefined;
-    const speaker = typeof parsed.speaker === "string" ? parsed.speaker : undefined;
+function randomFlightLevel() {
+  return 250 + Math.round(Math.random() * 80);
+}
 
-    states.set(parsed.callsign, {
-      callsign: parsed.callsign,
-      flightLevel,
-      heading,
-      command,
-      speaker,
-      lastHeard: entry.timestamp,
-    });
+function randomSpeed() {
+  return 320 + Math.round(Math.random() * 140);
+}
+
+function createRandomPosition() {
+  return {
+    x: Math.random() * SECTOR_HALF_WIDTH * 1.6 - SECTOR_HALF_WIDTH * 0.8,
+    y: Math.random() * SECTOR_HALF_HEIGHT * 1.6 - SECTOR_HALF_HEIGHT * 0.8,
+  };
+}
+
+function wrapCoordinate(value: number, limit: number) {
+  if (value > limit) {
+    return -limit + (value - limit);
   }
-
-  return Array.from(states.values()).sort(
-    (a, b) => new Date(b.lastHeard).getTime() - new Date(a.lastHeard).getTime(),
-  );
+  if (value < -limit) {
+    return limit + (value + limit);
+  }
+  return value;
 }
 
 function normalizeHeading(value: number) {
@@ -89,7 +88,7 @@ function detectConflicts(states: AircraftState[]): Conflict[] {
           const separationFeet = diff * 100;
           const higher = a.flightLevel >= b.flightLevel ? a : b;
           const lower = higher === a ? b : a;
-          const severity = diff === 0 ? "high" : "moderate";
+          const severity: Conflict["severity"] = diff === 0 ? "high" : "moderate";
           const altKey = `alt-${keyBase}`;
 
           if (!seen.has(altKey)) {
@@ -126,7 +125,7 @@ function detectConflicts(states: AircraftState[]): Conflict[] {
         if (headingDiff <= 20) {
           const headingKey = `hdg-${keyBase}`;
           if (!seen.has(headingKey)) {
-            const severity = headingDiff <= 5 ? "high" : headingDiff <= 15 ? "moderate" : "low";
+            const severity: Conflict["severity"] = headingDiff <= 5 ? "high" : headingDiff <= 15 ? "moderate" : "low";
             const turnHeading = normalizeHeading((b.heading ?? 0) + 30);
             conflicts.push({
               id: headingKey,
@@ -136,12 +135,43 @@ function detectConflicts(states: AircraftState[]): Conflict[] {
               )}° of heading separation.`,
               resolution:
                 severity === "high"
-                  ? `Vector ${b.callsign} immediately: suggest heading ${turnHeading.toString().padStart(3, "0")}° or greater divergence.`
+                  ? `Vector ${b.callsign} immediately: suggest heading ${turnHeading
+                      .toString()
+                      .padStart(3, "0")}° or greater divergence.`
                   : `Plan lateral separation: issue ${b.callsign} a 30° diverging turn to increase spacing.`,
               severity,
               metric: `Heading separation ${headingDiff.toFixed(0)}°`,
             });
             seen.add(headingKey);
+          }
+        }
+      }
+
+      if (a.position && b.position) {
+        const dx = a.position.x - b.position.x;
+        const dy = a.position.y - b.position.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance <= 12) {
+          const proximityKey = `prox-${keyBase}`;
+          if (!seen.has(proximityKey)) {
+            const severity: Conflict["severity"] = distance <= 4 ? "high" : distance <= 8 ? "moderate" : "low";
+            const suggestedTurn = normalizeHeading((a.heading ?? randomHeading()) + 45);
+            conflicts.push({
+              id: proximityKey,
+              aircraft: [a.callsign, b.callsign],
+              description: `${a.callsign} and ${b.callsign} are within ${distance.toFixed(
+                1,
+              )} NM of each other.`,
+              resolution:
+                severity === "high"
+                  ? `Recommend immediate divergence: instruct ${a.callsign} to turn ${suggestedTurn
+                      .toString()
+                      .padStart(3, "0")}° and adjust one aircraft by ±2,000 ft.`
+                  : `Plan a proactive vector: nudge ${b.callsign} 20° off course or alter speed to build spacing.`,
+              severity,
+              metric: `Proximity ${distance.toFixed(1)} NM`,
+            });
+            seen.add(proximityKey);
           }
         }
       }
@@ -181,11 +211,69 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isMicSupported, setIsMicSupported] = useState(false);
+  const [aircraftStates, setAircraftStates] = useState<AircraftState[]>([]);
+  const aircraftMapRef = useRef<Map<string, AircraftState>>(new Map());
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<BlobPart[]>([]);
   const pendingStopRef = useRef(false);
+
+  const commitAircraftMap = (map: Map<string, AircraftState>) => {
+    aircraftMapRef.current = map;
+    const sorted = Array.from(map.values()).sort(
+      (a, b) => new Date(b.lastHeard).getTime() - new Date(a.lastHeard).getTime(),
+    );
+    setAircraftStates(sorted);
+  };
+
+  const updateAircraft = (
+    callsign: string,
+    builder: (previous: AircraftState | undefined) => AircraftState,
+  ) => {
+    const map = new Map(aircraftMapRef.current);
+    const next = builder(map.get(callsign));
+    map.set(callsign, next);
+    commitAircraftMap(map);
+  };
+
+  const ingestTransmission = (parsedTransmission: ParsedTransmission | null, timestamp: string) => {
+    if (!parsedTransmission?.callsign) {
+      return;
+    }
+
+    const callsign = parsedTransmission.callsign as string;
+
+    updateAircraft(callsign, (previous) => {
+      const position = previous?.position ?? createRandomPosition();
+      const speed = previous?.speed ?? randomSpeed();
+      const heading =
+        typeof parsedTransmission.heading === "number" && !Number.isNaN(parsedTransmission.heading)
+          ? parsedTransmission.heading
+          : typeof previous?.heading === "number" && !Number.isNaN(previous.heading)
+          ? previous.heading
+          : randomHeading();
+      const flightLevel =
+        typeof parsedTransmission.flight_level === "number" &&
+        !Number.isNaN(parsedTransmission.flight_level)
+          ? parsedTransmission.flight_level
+          : typeof previous?.flightLevel === "number" && !Number.isNaN(previous.flightLevel)
+          ? previous.flightLevel
+          : randomFlightLevel();
+
+      return {
+        callsign,
+        flightLevel,
+        heading,
+        command: parsedTransmission.command ?? previous?.command,
+        speaker: parsedTransmission.speaker ?? previous?.speaker,
+        lastHeard: timestamp,
+        position: { ...position },
+        speed,
+        origin: previous?.origin ?? "live",
+      };
+    });
+  };
 
   const stopActiveStream = () => {
     const stream = mediaStreamRef.current;
@@ -217,34 +305,230 @@ export default function App() {
     };
   }, []);
 
-  const aircraftStates = useMemo(() => buildAircraftStates(history), [history]);
-  const conflicts = useMemo(() => detectConflicts(aircraftStates), [aircraftStates]);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
 
-  async function processResult(result: SttResult) {
+    const now = new Date().toISOString();
+    const seeds = [
+      { callsign: "SIM210", heading: 45, flightLevel: 320 },
+      { callsign: "SIM432", heading: 135, flightLevel: 280 },
+      { callsign: "SIM905", heading: 300, flightLevel: 360 },
+    ];
+
+    const map = new Map(aircraftMapRef.current);
+    let changed = false;
+    for (const seed of seeds) {
+      if (map.has(seed.callsign)) {
+        continue;
+      }
+      map.set(seed.callsign, {
+        callsign: seed.callsign,
+        flightLevel: seed.flightLevel,
+        heading: seed.heading,
+        command: "maintain",
+        speaker: "simulated",
+        lastHeard: now,
+        position: createRandomPosition(),
+        speed: randomSpeed(),
+        origin: "simulated",
+      });
+      changed = true;
+    }
+
+    if (changed) {
+      commitAircraftMap(map);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let animationFrame: number;
+    let last = typeof performance !== "undefined" ? performance.now() : Date.now();
+    let accumulator = 0;
+
+    const tick = (time: number) => {
+      const now = time ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
+      const deltaSeconds = Math.max(0, (now - last) / 1000);
+      last = now;
+      accumulator += deltaSeconds;
+
+      if (accumulator >= 0.5) {
+        const stepSeconds = accumulator;
+        accumulator = 0;
+        const map = new Map<string, AircraftState>();
+        let changed = false;
+
+        aircraftMapRef.current.forEach((state, key) => {
+          const heading =
+            typeof state.heading === "number" && !Number.isNaN(state.heading)
+              ? state.heading
+              : randomHeading();
+          const speed =
+            typeof state.speed === "number" && !Number.isNaN(state.speed)
+              ? state.speed
+              : randomSpeed();
+          const basePosition = state.position ?? createRandomPosition();
+          const radians = (heading * Math.PI) / 180;
+          const distanceNm = speed * (stepSeconds / 3600);
+          let nextX = basePosition.x + Math.sin(radians) * distanceNm;
+          let nextY = basePosition.y - Math.cos(radians) * distanceNm;
+          nextX = wrapCoordinate(nextX, SECTOR_HALF_WIDTH - 2);
+          nextY = wrapCoordinate(nextY, SECTOR_HALF_HEIGHT - 2);
+
+          if (
+            !state.position ||
+            Math.abs(nextX - state.position.x) > 0.001 ||
+            Math.abs(nextY - state.position.y) > 0.001 ||
+            speed !== state.speed ||
+            heading !== state.heading
+          ) {
+            const updated: AircraftState = {
+              ...state,
+              heading,
+              speed,
+              position: { x: nextX, y: nextY },
+              lastHeard: state.origin === "simulated" ? new Date().toISOString() : state.lastHeard,
+            };
+            map.set(key, updated);
+            changed = true;
+          } else {
+            map.set(key, state);
+          }
+        });
+
+        if (changed) {
+          commitAircraftMap(map);
+        } else if (map.size > 0) {
+          aircraftMapRef.current = map;
+        }
+      }
+
+      animationFrame = window.requestAnimationFrame(tick);
+    };
+
+    animationFrame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const map = new Map(aircraftMapRef.current);
+      let changed = false;
+
+      map.forEach((state, key) => {
+        if (state.origin !== "simulated") {
+          return;
+        }
+
+        let flightLevel = state.flightLevel ?? randomFlightLevel();
+        if (Math.random() < 0.25) {
+          const delta = Math.random() < 0.5 ? -10 : 10;
+          flightLevel = Math.max(180, Math.min(410, flightLevel + delta));
+        }
+        const headingDelta = (Math.random() - 0.5) * 30;
+        const heading = normalizeHeading((state.heading ?? randomHeading()) + headingDelta);
+
+        map.set(key, {
+          ...state,
+          flightLevel,
+          heading,
+          command: Math.random() < 0.4 ? "maintain" : state.command ?? "monitor",
+          lastHeard: new Date().toISOString(),
+        });
+        changed = true;
+      });
+
+      if (changed) {
+        commitAircraftMap(map);
+      }
+    }, 12000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const conflicts = useMemo(() => detectConflicts(aircraftStates), [aircraftStates]);
+  const nextAction = useMemo<NextActionSuggestion | null>(() => {
+    if (conflicts.length > 0) {
+      const priority = { high: 0, moderate: 1, low: 2 } as const;
+      const [top] = [...conflicts].sort(
+        (a, b) => priority[a.severity] - priority[b.severity],
+      );
+      if (top) {
+        return {
+          title: "Resolve highlighted conflict",
+          summary: top.resolution,
+          rationale: top.description,
+        };
+      }
+    }
+
+    if (parsed?.command && parsed.speaker === "pilot") {
+      const callsign = parsed.callsign ?? "the aircraft";
+      const acknowledgement =
+        response ||
+        `Clear ${callsign} to ${parsed.command} and provide the corresponding heading or level.`;
+      return {
+        title: "Acknowledge pilot request",
+        summary: acknowledgement,
+        rationale: `${callsign} reported as ${parsed.command}. Issue a clear readback to keep the loop tight.`,
+      };
+    }
+
+    if (aircraftStates.length > 0) {
+      const recent = aircraftStates[0];
+      const levelText = formatFlightLevel(recent.flightLevel);
+      return {
+        title: "Maintain situational scan",
+        summary: `Confirm ${recent.callsign} holds ${levelText} and current vector.`,
+        rationale: `${recent.callsign} was last heard ${formatClock(recent.lastHeard)} and remains the most recent contact.`,
+      };
+    }
+
+    return null;
+  }, [conflicts, parsed, response, aircraftStates]);
+
+  async function processResult(
+    result: SttResult,
+    options: { recordHistory?: boolean; timestamp?: string; playAudio?: boolean } = {},
+  ) {
     const normalizedParsed = normalizeParsed(result.parsed);
     const transcriptText = result.transcript ?? "";
     const responseText = result.response ?? "";
+    const entryTimestamp = options.timestamp ?? new Date().toISOString();
 
     setTranscript(transcriptText);
     setParsed(normalizedParsed);
     setResponse(responseText);
 
-    setHistory((prev) => {
-      const entry: TransmissionEntry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        timestamp: new Date().toISOString(),
-        transcript: transcriptText,
-        parsed: normalizedParsed,
-        response: responseText,
-      };
-      const updated = [...prev, entry];
-      if (updated.length > HISTORY_LIMIT) {
-        return updated.slice(updated.length - HISTORY_LIMIT);
-      }
-      return updated;
-    });
+    if (options.recordHistory !== false) {
+      setHistory((prev) => {
+        const entry: TransmissionEntry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          timestamp: entryTimestamp,
+          transcript: transcriptText,
+          parsed: normalizedParsed,
+          response: responseText,
+        };
+        const updated = [...prev, entry];
+        if (updated.length > HISTORY_LIMIT) {
+          return updated.slice(updated.length - HISTORY_LIMIT);
+        }
+        return updated;
+      });
+    }
 
-    if (responseText || result.response_tts) {
+    ingestTransmission(normalizedParsed, entryTimestamp);
+
+    if ((responseText || result.response_tts) && options.playAudio !== false) {
       try {
         const ttsRes = await fetch("http://127.0.0.1:8000/tts", {
           method: "POST",
@@ -264,6 +548,42 @@ export default function App() {
       }
     }
   }
+
+  const handleDownloadLog = () => {
+    if (history.length === 0 || typeof window === "undefined") {
+      return;
+    }
+
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      transmissions: history,
+      aircraft: aircraftStates,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `atc-session-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleReplay = (entry: TransmissionEntry) => {
+    void processResult(
+      {
+        transcript: entry.transcript,
+        parsed: entry.parsed,
+        response: entry.response,
+        response_tts: entry.response,
+      },
+      { recordHistory: false, playAudio: false, timestamp: new Date().toISOString() },
+    );
+  };
 
   async function processAudioFile(file: File) {
     setIsLoading(true);
@@ -569,15 +889,34 @@ export default function App() {
 
             {history.length > 0 && (
               <section className="panel">
-                <h2 className="panel__title">Loop history</h2>
+                <div className="panel__header">
+                  <h2>Loop history</h2>
+                  <button
+                    type="button"
+                    className="log-export"
+                    onClick={handleDownloadLog}
+                    title="Download the current session log as JSON"
+                  >
+                    Download log
+                  </button>
+                </div>
                 <ul className="history-list">
                   {[...history]
                     .reverse()
                     .map((entry) => (
                       <li key={entry.id} className="history-item">
                         <div className="history-item__meta">
-                          <span>{formatClock(entry.timestamp)}</span>
-                          {entry.parsed?.callsign && <span>{entry.parsed.callsign}</span>}
+                          <div className="history-item__meta-group">
+                            <span>{formatClock(entry.timestamp)}</span>
+                            {entry.parsed?.callsign && <span>{entry.parsed.callsign}</span>}
+                          </div>
+                          <button
+                            type="button"
+                            className="history-item__replay"
+                            onClick={() => handleReplay(entry)}
+                          >
+                            Replay
+                          </button>
                         </div>
                         <p className="history-item__transcript">{entry.transcript || "—"}</p>
                         {entry.response && (
@@ -590,7 +929,14 @@ export default function App() {
             )}
           </div>
 
-          <ConflictResolutionPanel aircraftStates={aircraftStates} conflicts={conflicts} />
+          <div className="analysis-column">
+            <AirspaceMap aircraft={aircraftStates} conflicts={conflicts} />
+            <ConflictResolutionPanel
+              aircraftStates={aircraftStates}
+              conflicts={conflicts}
+              nextAction={nextAction}
+            />
+          </div>
         </div>
       </div>
     </div>
