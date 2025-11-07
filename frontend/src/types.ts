@@ -32,6 +32,12 @@ export interface AircraftState {
   command?: string;
   speaker?: string;
   lastHeard: string;
+  position?: {
+    x: number;
+    y: number;
+  };
+  speed?: number;
+  origin?: "live" | "simulated";
 }
 
 export interface Conflict {
@@ -41,4 +47,10 @@ export interface Conflict {
   resolution: string;
   severity: ConflictSeverity;
   metric: string;
+}
+
+export interface NextActionSuggestion {
+  title: string;
+  summary: string;
+  rationale: string;
 }

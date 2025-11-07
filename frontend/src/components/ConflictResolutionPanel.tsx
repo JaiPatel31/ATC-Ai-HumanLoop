@@ -1,9 +1,10 @@
-import type { AircraftState, Conflict } from "../types";
+import type { AircraftState, Conflict, NextActionSuggestion } from "../types";
 import "../App.css";
 
 interface ConflictResolutionPanelProps {
   aircraftStates: AircraftState[];
   conflicts: Conflict[];
+  nextAction?: NextActionSuggestion | null;
 }
 
 function formatFlightLevel(value?: number) {
@@ -33,6 +34,22 @@ function formatRelativeTime(timestamp: string) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatPosition(position?: { x: number; y: number }) {
+  if (!position) {
+    return "—";
+  }
+  const east = position.x >= 0 ? "E" : "W";
+  const north = position.y >= 0 ? "N" : "S";
+  return `${Math.abs(position.x).toFixed(1)}${east} / ${Math.abs(position.y).toFixed(1)}${north}`;
+}
+
+function formatSpeed(speed?: number) {
+  if (typeof speed !== "number" || Number.isNaN(speed)) {
+    return "—";
+  }
+  return `${Math.round(speed)} kts`;
+}
+
 const severityLabels: Record<Conflict["severity"], string> = {
   high: "High risk",
   moderate: "Monitor",
@@ -42,6 +59,7 @@ const severityLabels: Record<Conflict["severity"], string> = {
 export default function ConflictResolutionPanel({
   aircraftStates,
   conflicts,
+  nextAction,
 }: ConflictResolutionPanelProps) {
   return (
     <aside className="panel conflict-panel">
@@ -53,6 +71,18 @@ export default function ConflictResolutionPanel({
         Track aircraft assignments, highlight emerging conflicts, and capture a ready-made playbook for your
         next instruction.
       </p>
+
+      {nextAction && (
+        <section className="next-action">
+          <div className="section-header">
+            <h3>Next best action</h3>
+            <span className="section-header__meta">Live recommendation</span>
+          </div>
+          <p className="next-action__title">{nextAction.title}</p>
+          <p className="next-action__summary">{nextAction.summary}</p>
+          <p className="next-action__rationale">{nextAction.rationale}</p>
+        </section>
+      )}
 
       <section className="conflict-panel__section">
         <div className="section-header">
@@ -70,9 +100,16 @@ export default function ConflictResolutionPanel({
                     <p className="aircraft-card__callsign">{state.callsign}</p>
                     <p className="aircraft-card__timestamp">{formatRelativeTime(state.lastHeard)}</p>
                   </div>
-                  <span className={`badge${state.command ? "" : " badge--muted"}`}>
-                    {state.command ? state.command : "Unknown"}
-                  </span>
+                  <div className="aircraft-card__tags">
+                    {state.origin && (
+                      <span className={`badge badge--origin-${state.origin}`}>
+                        {state.origin === "simulated" ? "Simulated" : "Live"}
+                      </span>
+                    )}
+                    <span className={`badge${state.command ? "" : " badge--muted"}`}>
+                      {state.command ? state.command : "Unknown"}
+                    </span>
+                  </div>
                 </div>
                 <dl className="aircraft-card__grid">
                   <div>
@@ -90,6 +127,14 @@ export default function ConflictResolutionPanel({
                   <div>
                     <dt>Speaker</dt>
                     <dd>{state.speaker || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Position</dt>
+                    <dd>{formatPosition(state.position)}</dd>
+                  </div>
+                  <div>
+                    <dt>Ground speed</dt>
+                    <dd>{formatSpeed(state.speed)}</dd>
                   </div>
                 </dl>
               </li>
