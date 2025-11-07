@@ -16,3 +16,18 @@ export async function sendAudio(file: File): Promise<SttResult> {
   const data = (await res.json()) as SttResult;
   return data;
 }
+
+export async function interpretTranscript(transcript: string): Promise<SttResult> {
+  const res = await fetch("http://127.0.0.1:8000/interpret", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Interpretation request failed with status ${res.status}`);
+  }
+
+  const data = (await res.json()) as SttResult;
+  return data;
+}
