@@ -549,6 +549,67 @@ export default function App() {
     }
   }
 
+  async function triggerConflictDemo() {
+    if (isLoading) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    const timestamp = new Date();
+    const scenarioFlights: AircraftState[] = [
+      {
+        callsign: "DEMO101",
+        flightLevel: 340,
+        heading: 85,
+        command: "maintain",
+        speaker: "pilot",
+        lastHeard: timestamp.toISOString(),
+        position: { x: -6.2, y: 4.8 },
+        speed: 420,
+        origin: "simulated",
+      },
+      {
+        callsign: "DEMO202",
+        flightLevel: 340,
+        heading: 270,
+        command: "traffic alert",
+        speaker: "pilot",
+        lastHeard: timestamp.toISOString(),
+        position: { x: -4.9, y: 5.4 },
+        speed: 430,
+        origin: "simulated",
+      },
+    ];
+
+    const map = new Map(aircraftMapRef.current);
+    scenarioFlights.forEach((state) => {
+      map.set(state.callsign, state);
+    });
+    commitAircraftMap(map);
+
+    try {
+      const scenarioTransmissions = [
+        {
+          text:
+            "Center, DEMO202 request immediate descent to flight level three two zero, TCAS traffic alert on DEMO101.",
+          timestamp: new Date(timestamp.getTime()).toISOString(),
+        },
+      ];
+
+      for (const transmission of scenarioTransmissions) {
+        const result = await interpretTranscript(transmission.text);
+        await processResult(result, { timestamp: transmission.timestamp });
+      }
+    } catch (err) {
+      console.error("Conflict demo failed", err);
+      setError("Unable to trigger the conflict demo. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   const handleDownloadLog = () => {
     if (history.length === 0 || typeof window === "undefined") {
       return;
@@ -834,6 +895,24 @@ export default function App() {
                   {isLoading ? "Interpreting…" : "Interpret transmission"}
                 </button>
               </form>
+
+              <div className="demo-scenario">
+                <div className="demo-scenario__text">
+                  <h3>Need a quick demo?</h3>
+                  <p>
+                    Inject a scripted loss-of-separation event and let the loop generate and play the corrective
+                    controller call.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="demo-scenario__button"
+                  onClick={() => void triggerConflictDemo()}
+                  disabled={isLoading}
+                >
+                  {isLoading ? "Preparing scenario…" : "Trigger conflict demo"}
+                </button>
+              </div>
 
               {error && <p className="panel__status panel__status--error">{error}</p>}
             </section>

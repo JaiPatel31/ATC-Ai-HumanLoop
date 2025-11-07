@@ -15,12 +15,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _format_flight_level(value: int | float | None) -> str:
+    if value is None:
+        return "flight level"
+
+    level = int(round(value))
+    return f"flight level {level:03d}"
+
+
+def _normalize_heading(value: int | float | None) -> int | None:
+    if value is None:
+        return None
+
+    return int(round(value)) % 360
+
+
 def _build_controller_response(parsed: dict) -> str:
     cs = parsed.get("callsign") or "Aircraft"
     fl = parsed.get("flight_level") or 0
     hdg = parsed.get("heading") or 0
     cmd = parsed.get("command")
     speaker = parsed.get("speaker")
+    event = parsed.get("event")
+
+    if event == "traffic_alert":
+        intruder = parsed.get("traffic_callsign") or "opposing traffic"
+        current_heading = _normalize_heading(parsed.get("heading"))
+        divergence_heading = None
+        if current_heading is not None:
+            divergence_heading = (current_heading - 30) % 360
+
+        descent_target = None
+        if isinstance(parsed.get("flight_level"), (int, float)):
+            level_value = int(round(parsed.get("flight_level")))
+            if level_value >= 20:
+                descent_target = max(0, level_value - 20)
+
+        fragments: list[str] = [f"{cs}, roger. Traffic alert on {intruder} acknowledged."]
+        if divergence_heading is not None:
+            fragments.append(f"Turn left heading {divergence_heading:03d} immediately.")
+        if descent_target is not None:
+            fragments.append(
+                f"Descend to {_format_flight_level(descent_target)} for separation."
+            )
+        else:
+            fragments.append("Descend immediately to increase vertical spacing.")
+        if intruder != "opposing traffic":
+            fragments.append(f"We'll ensure {intruder} maintains clearance.")
+        fragments.append("Report clear of conflict.")
+        return " ".join(fragments)
 
     if speaker == "pilot":
         if cmd == "descend":
