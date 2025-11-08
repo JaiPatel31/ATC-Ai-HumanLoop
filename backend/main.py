@@ -2,7 +2,7 @@ from fastapi import Body, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from stt_hf import pipeline_status, transcribe
 from parser import parse_atc
-from evaluation import evaluate
+from parser_ai_enhanced import parse_atc_enhanced  # AI-enhanced parser
 from fastapi.responses import FileResponse
 from tts import describe_capabilities, synthesize
 from phonetics import replace_callsign_at_start, expand_callsign_inline
@@ -90,11 +90,16 @@ def _build_controller_response(parsed: dict) -> str:
     return f"{cs}, say again — transmission unclear."
 
 
-def _process_transcript(transcript: str):
+def _process_transcript(transcript: str, use_ai_parser: bool = True):
     if not transcript or not transcript.strip():
         raise HTTPException(status_code=400, detail="Transcript is empty")
 
-    parsed = parse_atc(transcript)
+    # Use AI-enhanced parser for better quality, fallback to original if specified
+    if use_ai_parser:
+        parsed = parse_atc_enhanced(transcript)
+    else:
+        parsed = parse_atc(transcript)
+
     normalized = replace_callsign_at_start(transcript, parsed.get("callsign"))
     response_text = _build_controller_response(parsed)
     response_tts = expand_callsign_inline(response_text, parsed.get("callsign"))
@@ -108,15 +113,29 @@ def _process_transcript(transcript: str):
 
 
 @app.post("/stt")
-async def stt(file: UploadFile):
+async def stt(file: UploadFile, use_ai_parser: bool = True):
+    """
+    Speech-to-text endpoint with AI-enhanced parsing.
+
+    Args:
+        file: Audio file upload
+        use_ai_parser: Use AI-enhanced parser (default: True) for better quality
+    """
     transcript = await transcribe(file)
-    return _process_transcript(transcript)
+    return _process_transcript(transcript, use_ai_parser=use_ai_parser)
 
 
 @app.post("/interpret")
 async def interpret(payload: dict = Body(...)):
+    """
+    Interpret text transcript with AI-enhanced parsing.
+
+    Args:
+        payload: {"transcript": str, "use_ai_parser": bool (optional, default: True)}
+    """
     transcript = payload.get("transcript", "") if isinstance(payload, dict) else ""
-    return _process_transcript(transcript)
+    use_ai_parser = payload.get("use_ai_parser", True) if isinstance(payload, dict) else True
+    return _process_transcript(transcript, use_ai_parser=use_ai_parser)
 
 
 @app.post("/tts")
@@ -138,7 +157,8 @@ async def health_check():
         "speech_to_text": pipeline_status(),
         "text_to_speech": describe_capabilities(),
         "parser": {
-            "sample_accuracy": evaluate()["accuracy"],
+            "type": "AI-enhanced",
+            "version": "1.0",
         },
     }
 
