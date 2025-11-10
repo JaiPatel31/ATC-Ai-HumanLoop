@@ -94,7 +94,15 @@ def synthesize(text: str, speaker: str = "controller", path: str = "response.wav
     if tts is None:
         return _sine_wave_speech_stub(text or "", full_path)
 
-    tts.tts_to_file(text=text, file_path=full_path)
+    # For multi-speaker models like VCTK, we need to specify a speaker
+    # Use different speaker IDs for different roles
+    if speaker == "pilot":
+        # VCTK model - use a specific speaker (p225 is a female voice)
+        tts.tts_to_file(text=text, speaker="p225", file_path=full_path)
+    else:
+        # Single-speaker model (LJSpeech)
+        tts.tts_to_file(text=text, file_path=full_path)
+
     return add_radio_effect(full_path)
 
 
